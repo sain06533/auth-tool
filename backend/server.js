@@ -125,44 +125,39 @@ function generatePolynomialFromPoints(points) {
   app.post('/api/auth/register', upload.single('image'), async (req, res) => {
     try {
       const { username, password, points } = req.body;
+      const uploadedImageBuffer = req.file.buffer;
   
-      if (!username || !password || !req.file || !points) {
-        return res.status(400).json({ message: 'All fields are required.' });
-      }
+      // Generate image hash
+      const imageHash = crypto.createHash('sha256').update(uploadedImageBuffer).digest('hex');
   
-      // Parse points
+      // Parse points from the request
       const parsedPoints = JSON.parse(points);
-      if (!Array.isArray(parsedPoints) || parsedPoints.length < 3) {
-        return res.status(400).json({ message: 'At least 3 points are required.' });
-      }
   
-      // Generate a polynomial equation
+      // Generate polynomial coefficients
       const coefficients = generatePolynomial(parsedPoints);
+      console.log('Generated Coefficients:', coefficients);
   
-      console.log('Generated Coefficients:', coefficients); // Debugging: Check coefficients
-  
-      // Hash the image
-      const imageBuffer = req.file.buffer;
-      const imageHash = crypto.createHash('sha256').update(imageBuffer).digest('hex');
-  
-      // Hash the password
-      const hashedPassword = await bcrypt.hash(password, 10);
-  
-      // Save user to the database
-      const newUser = new User({
+      // Create a new user object
+      const user = new User({
         username,
-        password: hashedPassword,
+        password: await bcrypt.hash(password, 10),
         imageHash,
-        coefficients, // Save the coefficients
+        points: coefficients, // Assign coefficients to the points field
       });
-      await newUser.save();
   
-      res.status(200).json({ message: 'Registration successful.' });
+      console.log('Saving User:', user);
+  
+      // Save the user to the database
+      await user.save();
+  
+      res.status(200).json({ message: 'Registration successful' });
     } catch (error) {
-      console.error('Error in registration:', error);
-      res.status(500).json({ message: 'Registration failed.', error: error.message });
+      console.error('Error during registration:', error);
+      res.status(400).json({ message: 'Registration failed', error: error.message });
     }
   });
+  
+  
   
   
   
@@ -180,63 +175,56 @@ function evaluatePolynomial(coefficients, x) {
   }
   
   
-  // Login Route
-  app.post('/api/auth/login', upload.single('image'), async (req, res) => {
-    try {
-      const { username, password, points } = req.body;
-  
-      if (!username || !password || !req.file || !points) {
-        return res.status(400).json({ message: 'All fields are required.' });
-      }
-  
-      // Parse points
-      const parsedPoints = JSON.parse(points);
-      if (!Array.isArray(parsedPoints) || parsedPoints.length < 3) {
-        return res.status(400).json({ message: 'At least 3 points are required.' });
-      }
-  
-      // Find user in the database
-      const user = await User.findOne({ username });
-      if (!user) {
-        return res.status(404).json({ message: 'User not found.' });
-      }
-  
-      console.log('Retrieved Coefficients:', user.coefficients); // Debugging: Check coefficients
-  
-      if (!user.coefficients || !Array.isArray(user.coefficients)) {
-        return res.status(500).json({ message: 'User data corrupted. Missing polynomial coefficients.' });
-      }
-  
-      // Verify password
-      const isPasswordValid = await bcrypt.compare(password, user.password);
-      if (!isPasswordValid) {
-        return res.status(401).json({ message: 'Invalid password.' });
-      }
-  
-      // Verify image hash
-      const imageBuffer = req.file.buffer;
-      const uploadedImageHash = crypto.createHash('sha256').update(imageBuffer).digest('hex');
-      if (uploadedImageHash !== user.imageHash) {
-        return res.status(401).json({ message: 'Image verification failed.' });
-      }
-  
-      // Verify points against the polynomial
-      const tolerance = 5; // Adjust as needed
-      const isValidPoints = parsedPoints.every(({ x, y }) => {
-        const expectedY = evaluatePolynomial(user.coefficients, x); // Use coefficients from the database
-        return Math.abs(expectedY - y) <= tolerance;
-      });
-  
-      if (!isValidPoints) {
-        return res.status(401).json({ message: 'Point verification failed.' });
-      }
-  
-      res.status(200).json({ message: 'Login successful.' });
-    } catch (error) {
-      console.error('Error in login:', error);
-      res.status(500).json({ message: 'Login failed.', error: error.message });
+// Define TOLERANCE at the top of the file
+const TOLERANCE = 5; // Adjust tolerance value to suit user input precision
+
+// Login Route
+app.post('/api/auth/login', upload.single('image'), async (req, res) => {
+  try {
+    const { username, password, points } = req.body;
+    const uploadedImageBuffer = req.file.buffer;
+
+    // Find user
+    const user = await User.findOne({ username });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) return res.status(401).json({ message: 'Invalid password' });
+
+    // Verify image hash
+    const uploadedImageHash = crypto.createHash('sha256').update(uploadedImageBuffer).digest('hex');
+    if (uploadedImageHash !== user.imageHash) {
+      return res.status(401).json({ message: 'Image verification failed' });
     }
-  });
+
+    // Retrieve polynomial coefficients
+    const coefficients = user.points;
+    console.log('Retrieved Coefficients:', coefficients);
+
+    if (!coefficients || coefficients.length === 0) {
+      return res.status(400).json({ message: 'User data corrupted. Missing polynomial coefficients.' });
+    }
+
+    // Verify points with tolerance
+    const parsedPoints = JSON.parse(points);
+    const isValidPoints = parsedPoints.every((point) => {
+      const yCalculated = evaluatePolynomial(coefficients, point.x);
+      console.log(`Evaluating Polynomial with coefficients: ${coefficients} and x: ${point.x}`);
+      const isWithinTolerance = Math.abs(yCalculated - point.y) <= TOLERANCE;
+      return isWithinTolerance;
+    });
+
+    if (!isValidPoints) return res.status(401).json({ message: 'Point verification failed' });
+
+    res.status(200).json({ message: 'Login successful' });
+  } catch (error) {
+    console.error('Error during login:', error);
+    res.status(400).json({ message: 'Login failed', error: error.message });
+  }
+});
+
+  
   
   
   
