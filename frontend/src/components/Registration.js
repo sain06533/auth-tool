@@ -58,6 +58,7 @@ const Registration = () => {
     formData.append('points', JSON.stringify(points));
 
     try {
+      console.log('Points sent to server:', points);
       const response = await axios.post('http://localhost:5000/api/auth/register', formData);
       setMessage(response.data.message);
     } catch (error) {

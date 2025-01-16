@@ -176,7 +176,7 @@ function evaluatePolynomial(coefficients, x) {
   
   
 // Define TOLERANCE at the top of the file
-const TOLERANCE = 5; // Adjust tolerance value to suit user input precision
+const TOLERANCE = 50; // Adjust tolerance value to suit user input precision
 
 // Login Route
 app.post('/api/auth/login', upload.single('image'), async (req, res) => {
@@ -208,10 +208,18 @@ app.post('/api/auth/login', upload.single('image'), async (req, res) => {
 
     // Verify points with tolerance
     const parsedPoints = JSON.parse(points);
+    console.log('Received Points:', parsedPoints);
+
     const isValidPoints = parsedPoints.every((point) => {
       const yCalculated = evaluatePolynomial(coefficients, point.x);
-      console.log(`Evaluating Polynomial with coefficients: ${coefficients} and x: ${point.x}`);
+      console.log(
+        `Evaluating Polynomial with coefficients: ${coefficients} and x: ${point.x} -> Calculated y: ${yCalculated}, Expected y: ${point.y}`
+      );
+
       const isWithinTolerance = Math.abs(yCalculated - point.y) <= TOLERANCE;
+      if (!isWithinTolerance) {
+        console.log(`Point verification failed for x: ${point.x}, y: ${point.y}, calculated y: ${yCalculated}`);
+      }
       return isWithinTolerance;
     });
 
@@ -223,6 +231,7 @@ app.post('/api/auth/login', upload.single('image'), async (req, res) => {
     res.status(400).json({ message: 'Login failed', error: error.message });
   }
 });
+
 
   
   
