@@ -6,6 +6,7 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const cors = require('cors');
 const path = require('path');
+const usb = require('usb');
 require('dotenv').config();
 
 const app = express();
@@ -37,6 +38,17 @@ const User = mongoose.model('User', userSchema);
 
 // Routes
 // Registration Route
+// Helper function to get the USB device identifier
+function getUSBIdentifier() {
+  const devices = usb.getDeviceList();
+  if (devices.length === 0) {
+    return null; // No USB devices found
+  }
+
+  // Select the first USB device (customize as needed for your use case)
+  const device = devices[0];
+  return `${device.deviceDescriptor.idVendor}-${device.deviceDescriptor.idProduct}`;
+}
 
 // Generate a polynomial that passes through all the given points
 function generatePolynomial(points) {
@@ -122,40 +134,33 @@ function generatePolynomialFromPoints(points) {
   }
   
   // Registration Route
-  app.post('/api/auth/register', upload.single('image'), async (req, res) => {
-    try {
-      const { username, password, points } = req.body;
-      const uploadedImageBuffer = req.file.buffer;
-  
-      // Generate image hash
-      const imageHash = crypto.createHash('sha256').update(uploadedImageBuffer).digest('hex');
-  
-      // Parse points from the request
-      const parsedPoints = JSON.parse(points);
-  
-      // Generate polynomial coefficients
-      const coefficients = generatePolynomial(parsedPoints);
-      console.log('Generated Coefficients:', coefficients);
-  
-      // Create a new user object
-      const user = new User({
-        username,
-        password: await bcrypt.hash(password, 10),
-        imageHash,
-        points: coefficients, // Assign coefficients to the points field
-      });
-  
-      console.log('Saving User:', user);
-  
-      // Save the user to the database
-      await user.save();
-  
-      res.status(200).json({ message: 'Registration successful' });
-    } catch (error) {
-      console.error('Error during registration:', error);
-      res.status(400).json({ message: 'Registration failed', error: error.message });
+app.post('/api/auth/register', upload.single('image'), async (req, res) => {
+  try {
+    const { username, password, points } = req.body;
+    const imageBuffer = req.file.buffer;
+
+    const coefficients = generatePolynomial(JSON.parse(points));
+    const usbIdentifier = getUSBIdentifier();
+
+    if (!usbIdentifier) {
+      return res.status(400).json({ message: 'No USB device detected during registration.' });
     }
-  });
+
+    const user = new User({
+      username,
+      password: await bcrypt.hash(password, 10),
+      imageHash: crypto.createHash('sha256').update(imageBuffer).digest('hex'),
+      points: coefficients,
+      usbIdentifier,
+    });
+
+    await user.save();
+    res.status(201).json({ message: 'Registration successful' });
+  } catch (error) {
+    console.error('Error during registration:', error.message);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
   
   
   
@@ -184,51 +189,40 @@ app.post('/api/auth/login', upload.single('image'), async (req, res) => {
     const { username, password, points } = req.body;
     const uploadedImageBuffer = req.file.buffer;
 
-    // Find user
     const user = await User.findOne({ username });
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-    // Verify password
+    // Step 1: Password Verification
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) return res.status(401).json({ message: 'Invalid password' });
 
-    // Verify image hash
+    // Step 2: Image and Point Verification
     const uploadedImageHash = crypto.createHash('sha256').update(uploadedImageBuffer).digest('hex');
     if (uploadedImageHash !== user.imageHash) {
       return res.status(401).json({ message: 'Image verification failed' });
     }
 
-    // Retrieve polynomial coefficients
     const coefficients = user.points;
-    console.log('Retrieved Coefficients:', coefficients);
-
-    if (!coefficients || coefficients.length === 0) {
-      return res.status(400).json({ message: 'User data corrupted. Missing polynomial coefficients.' });
-    }
-
-    // Verify points with tolerance
     const parsedPoints = JSON.parse(points);
-    console.log('Received Points:', parsedPoints);
 
     const isValidPoints = parsedPoints.every((point) => {
       const yCalculated = evaluatePolynomial(coefficients, point.x);
-      console.log(
-        `Evaluating Polynomial with coefficients: ${coefficients} and x: ${point.x} -> Calculated y: ${yCalculated}, Expected y: ${point.y}`
-      );
-
       const isWithinTolerance = Math.abs(yCalculated - point.y) <= TOLERANCE;
-      if (!isWithinTolerance) {
-        console.log(`Point verification failed for x: ${point.x}, y: ${point.y}, calculated y: ${yCalculated}`);
-      }
       return isWithinTolerance;
     });
 
     if (!isValidPoints) return res.status(401).json({ message: 'Point verification failed' });
 
+    // Step 3: USB Verification
+    const usbIdentifier = getUSBIdentifier();
+    if (!usbIdentifier || usbIdentifier !== user.usbIdentifier) {
+      return res.status(401).json({ message: 'USB device verification failed' });
+    }
+
     res.status(200).json({ message: 'Login successful' });
   } catch (error) {
-    console.error('Error during login:', error);
-    res.status(400).json({ message: 'Login failed', error: error.message });
+    console.error('Error during login:', error.message);
+    res.status(500).json({ message: 'Internal server error' });
   }
 });
 

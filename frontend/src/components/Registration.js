@@ -6,9 +6,9 @@ const Registration = () => {
   const [password, setPassword] = useState('');
   const [image, setImage] = useState(null);
   const [points, setPoints] = useState([]);
+  const [usbDevice, setUsbDevice] = useState(null);
   const [message, setMessage] = useState('');
   const canvasRef = useRef(null);
-  const imageRef = useRef(null);
 
   const handleImageUpload = (event) => {
     const file = event.target.files[0];
@@ -25,7 +25,6 @@ const Registration = () => {
         canvas.height = img.height;
         ctx.drawImage(img, 0, 0);
       };
-      imageRef.current = img;
     };
     reader.readAsDataURL(file);
   };
@@ -44,10 +43,30 @@ const Registration = () => {
     ctx.fill();
   };
 
+  const selectUsbDevice = async () => {
+    try {
+      const device = await navigator.usb.requestDevice({ filters: [] });
+      setUsbDevice({
+        vendorId: device.vendorId,
+        productId: device.productId,
+        serialNumber: device.serialNumber || 'N/A',
+      });
+      setMessage(`USB Device Selected: Vendor ID ${device.vendorId}, Product ID ${device.productId}`);
+    } catch (error) {
+      console.error('Error selecting USB device:', error);
+      setMessage('Failed to select USB device.');
+    }
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (!image || points.length === 0) {
       setMessage('Please upload an image and select points.');
+      return;
+    }
+
+    if (!usbDevice) {
+      setMessage('Please select a USB device.');
       return;
     }
 
@@ -56,10 +75,11 @@ const Registration = () => {
     formData.append('password', password);
     formData.append('image', image);
     formData.append('points', JSON.stringify(points));
+    formData.append('usbDevice', JSON.stringify(usbDevice));
 
     try {
-      console.log('Points sent to server:', points);
-      const response = await axios.post('http://localhost:5000/api/auth/register', formData);
+      console.log('USB Device Data:', usbDevice);
+      const response = await axios.post('https://auth-tool.onrender.com/api/auth/register', formData);
       setMessage(response.data.message);
     } catch (error) {
       setMessage(error.response?.data?.message || 'Registration failed.');
@@ -90,6 +110,9 @@ const Registration = () => {
           style={{ border: '1px solid black', display: image ? 'block' : 'none' }}
           onClick={handleCanvasClick}
         ></canvas>
+        <button type="button" onClick={selectUsbDevice}>
+          Select USB Device
+        </button>
         <button type="submit">Register</button>
       </form>
       <p>{message}</p>
