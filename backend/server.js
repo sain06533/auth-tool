@@ -6,7 +6,6 @@ const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const cors = require('cors');
 const path = require('path');
-const usb = require('usb');
 require('dotenv').config();
 
 const app = express();
@@ -23,7 +22,7 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Multer setup for file uploads
+// Multer setup for file uploads (store images in memory)
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
@@ -31,206 +30,252 @@ const upload = multer({ storage });
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  imageHash: { type: String, required: true },
-  points: { type: Array, required: true },
+  images: [{ filename: String, data: Buffer, contentType: String }], // Store 4 images
+  selectedImage: String, // Image chosen for point verification
+  points: [{ x: Number, y: Number }], // User's selected points
+  polynomial: [Number], // Generated polynomial coefficients
 });
+
 const User = mongoose.model('User', userSchema);
 
-// Routes
-// Registration Route
-// Helper function to get the USB device identifier
-function getUSBIdentifier() {
-  const devices = usb.getDeviceList();
-  if (devices.length === 0) {
-    return null; // No USB devices found
+/**
+ * 🔹 Helper Function: Generate a polynomial from selected points
+ */
+function generatePolynomialFromPoints(points) {
+  const degree = points.length - 1;
+  const coefficients = Array(degree + 1).fill(0);
+
+  for (let i = 0; i <= degree; i++) {
+    const { x: xi, y: yi } = points[i];
+    let basisCoefficients = Array(degree + 1).fill(0);
+    basisCoefficients[0] = 1;
+
+    for (let j = 0; j <= degree; j++) {
+      if (j !== i) {
+        const { x: xj } = points[j];
+        const scale = 1 / (xi - xj);
+
+        for (let k = degree; k >= 0; k--) {
+          basisCoefficients[k] = (basisCoefficients[k] || 0) * -xj * scale +
+            (basisCoefficients[k - 1] || 0) * scale;
+        }
+      }
+    }
+
+    for (let k = 0; k <= degree; k++) {
+      coefficients[k] += yi * (basisCoefficients[k] || 0);
+    }
   }
 
-  // Select the first USB device (customize as needed for your use case)
-  const device = devices[0];
-  return `${device.deviceDescriptor.idVendor}-${device.deviceDescriptor.idProduct}`;
+  return coefficients;
 }
 
-// Generate a polynomial that passes through all the given points
-function generatePolynomial(points) {
-    const n = points.length;
-    const matrix = [];
-    const results = [];
-  
-    points.forEach(({ x, y }) => {
-      const row = [];
-      for (let i = 0; i < n; i++) {
-        row.push(Math.pow(x, i)); // x^0, x^1, x^2, ...
-      }
-      matrix.push(row);
-      results.push(y);
-    });
-  
-    // Solve the system of linear equations using Gaussian elimination
-    return gaussianElimination(matrix, results);
-  }
-  
-  // Solve a system of linear equations using Gaussian elimination
-  function gaussianElimination(matrix, results) {
-    const n = matrix.length;
-  
-    for (let i = 0; i < n; i++) {
-      // Make the diagonal element 1
-      const factor = matrix[i][i];
+
+
+
+/**
+ * 🔹 Helper Function: Solve a system of linear equations using Gaussian elimination
+ */
+function gaussianElimination(matrix, results) {
+  const n = matrix.length;
+
+  for (let i = 0; i < n; i++) {
+    const factor = matrix[i][i];
+    for (let j = 0; j < n; j++) {
+      matrix[i][j] /= factor;
+    }
+    results[i] /= factor;
+
+    for (let k = 0; k < n; k++) {
+      if (k === i) continue;
+      const multiplier = matrix[k][i];
       for (let j = 0; j < n; j++) {
-        matrix[i][j] /= factor;
+        matrix[k][j] -= multiplier * matrix[i][j];
       }
-      results[i] /= factor;
-  
-      // Make the other elements in this column 0
-      for (let k = 0; k < n; k++) {
-        if (k === i) continue;
-        const multiplier = matrix[k][i];
-        for (let j = 0; j < n; j++) {
-          matrix[k][j] -= multiplier * matrix[i][j];
-        }
-        results[k] -= multiplier * results[i];
-      }
+      results[k] -= multiplier * results[i];
     }
-  
-    return results;
   }
-  
-  // Evaluate the polynomial at a given x
-  function evaluatePolynomial(coefficients, x) {
-    return coefficients.reduce((sum, coef, index) => sum + coef * Math.pow(x, index), 0);
-  }
-  
-// Helper function to generate polynomial coefficients using Lagrange Interpolation
-function generatePolynomialFromPoints(points) {
-    const degree = points.length - 1;
-    const coefficients = Array(degree + 1).fill(0);
-  
-    for (let i = 0; i <= degree; i++) {
-      const { x: xi, y: yi } = points[i];
-  
-      // Compute Lagrange basis polynomial for each point
-      let basisCoefficients = Array(degree + 1).fill(0);
-      basisCoefficients[0] = 1;
-  
-      for (let j = 0; j <= degree; j++) {
-        if (j !== i) {
-          const { x: xj } = points[j];
-          const scale = 1 / (xi - xj);
-  
-          for (let k = degree; k >= 0; k--) {
-            basisCoefficients[k] = (basisCoefficients[k] || 0) * -xj * scale +
-              (basisCoefficients[k - 1] || 0) * scale;
-          }
-        }
-      }
-  
-      // Scale basis polynomial by yi and add to coefficients
-      for (let k = 0; k <= degree; k++) {
-        coefficients[k] += yi * (basisCoefficients[k] || 0);
-      }
-    }
-  
-    return coefficients;
-  }
-  
-  // Registration Route
-app.post('/api/auth/register', upload.single('image'), async (req, res) => {
+  return results;
+}
+
+/**
+ * 🔹 Helper Function: Evaluate a polynomial at a given x
+ */
+function evaluatePolynomial(coefficients, x) {
+  return coefficients.reduce((sum, coef, index) => sum + coef * Math.pow(x, index), 0);
+}
+
+app.get("/api/auth/getImages/:username", async (req, res) => {
   try {
-    const { username, password, points } = req.body;
-    const imageBuffer = req.file.buffer;
+    const user = await User.findOne({ username: req.params.username });
 
-    const coefficients = generatePolynomial(JSON.parse(points));
-    const usbIdentifier = getUSBIdentifier();
-
-    if (!usbIdentifier) {
-      return res.status(400).json({ message: 'No USB device detected during registration.' });
+    if (!user || !user.images || user.images.length === 0) {
+      return res.status(404).json({ message: "No images found" });
     }
 
-    const user = new User({
-      username,
-      password: await bcrypt.hash(password, 10),
-      imageHash: crypto.createHash('sha256').update(imageBuffer).digest('hex'),
-      points: coefficients,
-      usbIdentifier,
-    });
-
-    await user.save();
-    res.status(201).json({ message: 'Registration successful' });
+    // Convert images to Base64 URL format
+    const images = user.images.map((img) => ({
+      filename: img.filename, // Use original filename
+      data: `data:${img.contentType};base64,${img.data.toString("base64")}`, 
+      contentType: img.contentType,
+    }));
+    
+    res.json(images);
   } catch (error) {
-    console.error('Error during registration:', error.message);
-    res.status(500).json({ message: 'Internal server error' });
+    console.error("Error retrieving images:", error);
+    res.status(500).json({ message: "Server error" });
   }
 });
-  
-  
-  
-  
-  
-// Login Route
-// Helper function to evaluate a polynomial at a given x
-function evaluatePolynomial(coefficients, x) {
-    if (!coefficients || !Array.isArray(coefficients)) {
-      console.error('Invalid coefficients:', coefficients); // Debugging
-      throw new Error('Invalid coefficients provided to evaluatePolynomial.');
-    }
-  
-    console.log('Evaluating Polynomial with coefficients:', coefficients, 'and x:', x); // Debugging
-  
-    return coefficients.reduce((sum, coef, index) => sum + coef * Math.pow(x, index), 0);
-  }
-  
-  
-// Define TOLERANCE at the top of the file
-const TOLERANCE = 50; // Adjust tolerance value to suit user input precision
 
-// Login Route
-app.post('/api/auth/login', upload.single('image'), async (req, res) => {
+function verifyPolynomial(points, polynomial, tolerance = 50) {
+  if (!points || !polynomial) return false;
+
+  for (let point of points) {
+      let expectedY = 0;
+      for (let i = 0; i < polynomial.length; i++) {
+          expectedY += polynomial[i] * Math.pow(point.x, i);
+      }
+
+      if (Math.abs(expectedY - point.y) > tolerance) {
+          return false; // Point does not match within tolerance
+      }
+  }
+  return true; // All points matched within tolerance
+}
+
+/**
+ * 🔹 Registration Route - Upload 4 Images, Select 1 for Points
+ */
+app.post('/api/auth/register', upload.array('images', 4), async (req, res) => {
   try {
-    const { username, password, points } = req.body;
-    const uploadedImageBuffer = req.file.buffer;
+    const { username, password, selectedImage, points } = req.body;
+    let parsedPoints = JSON.parse(points);
+
+    if (!parsedPoints || parsedPoints.length < 2) {
+      return res.status(400).json({ message: 'Invalid points for polynomial generation.' });
+    }
+
+    // 🔹 Generate polynomial without scale factor
+    const polynomialCoefficients = generatePolynomialFromPoints(parsedPoints);
+    if (!polynomialCoefficients || polynomialCoefficients.some(isNaN)) {
+      return res.status(400).json({ message: 'Failed to generate polynomial. Please reselect points.' });
+    }
+
+    const imageFiles = req.files.map((file) => ({
+      filename: file.originalname,
+      data: file.buffer,
+      contentType: file.mimetype,
+    }));
+
+    const newUser = new User({
+      username,
+      password: await bcrypt.hash(password, 10),
+      images: imageFiles,
+      selectedImage,
+      points: parsedPoints,
+      polynomial: polynomialCoefficients
+    });
+
+    await newUser.save();
+    res.status(201).json({ message: 'Registration successful' });
+
+  } catch (error) {
+    console.error('Registration Error:', error);
+    res.status(500).json({ message: 'Registration failed' });
+  }
+});
+
+
+
+
+
+
+
+/**
+ * 🔹 Login Step 1 - Validate Password
+ */
+app.post('/api/auth/login-step1', async (req, res) => {
+  try {
+    const { username, password } = req.body;
 
     const user = await User.findOne({ username });
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-    // Step 1: Password Verification
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) return res.status(401).json({ message: 'Invalid password' });
 
-    // Step 2: Image and Point Verification
-    const uploadedImageHash = crypto.createHash('sha256').update(uploadedImageBuffer).digest('hex');
-    if (uploadedImageHash !== user.imageHash) {
-      return res.status(401).json({ message: 'Image verification failed' });
-    }
+    // Proceed to Step 2 (send images for selection)
+    res.status(200).json({ message: 'Password validated', images: user.images.map(img => img.filename) });
 
-    const coefficients = user.points;
-    const parsedPoints = JSON.parse(points);
-
-    const isValidPoints = parsedPoints.every((point) => {
-      const yCalculated = evaluatePolynomial(coefficients, point.x);
-      const isWithinTolerance = Math.abs(yCalculated - point.y) <= TOLERANCE;
-      return isWithinTolerance;
-    });
-
-    if (!isValidPoints) return res.status(401).json({ message: 'Point verification failed' });
-
-    // Step 3: USB Verification
-    const usbIdentifier = getUSBIdentifier();
-    if (!usbIdentifier || usbIdentifier !== user.usbIdentifier) {
-      return res.status(401).json({ message: 'USB device verification failed' });
-    }
-
-    res.status(200).json({ message: 'Login successful' });
   } catch (error) {
-    console.error('Error during login:', error.message);
-    res.status(500).json({ message: 'Internal server error' });
+    console.error('Login Step 1 Error:', error);
+    res.status(500).json({ message: 'Login failed' });
+  }
+});
+
+/**
+ * 🔹 Login Step 2 - User Selects Correct Image
+ */
+app.post('/api/auth/login-step2', async (req, res) => {
+  try {
+    const { username, selectedImage } = req.body;
+
+    const user = await User.findOne({ username });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    console.log("Stored selectedImage in DB:", user.selectedImage);
+    console.log("Received selectedImage from frontend:", selectedImage);
+
+    if (user.selectedImage !== selectedImage) {
+      return res.status(401).json({ message: 'Incorrect image selected' });
+    }
+    if (user.selectedImage === selectedImage) {
+      console.log("Received selectedImage from frontend:", selectedImage);
+    }
+    res.status(200).json({ message: 'Correct image selected, proceed to point verification' });
+
+  } catch (error) {
+    console.error('Login Step 2 Error:', error);
+    res.status(500).json({ message: 'Login failed' });
+  }
+});
+
+/**
+ * 🔹 Login Step 3 - Verify Points on Selected Image
+ */
+app.post('/api/auth/login-step3', async (req, res) => {
+  try {
+    const { username, points } = req.body;
+    let parsedPoints = JSON.parse(points);
+
+    const user = await User.findOne({ username });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    if (!user.polynomial) {
+      return res.status(500).json({ message: 'Polynomial missing in database' });
+    }
+
+    // 🔹 Verify points using polynomial with a tolerance
+    const tolerance = 50; // Adjust as needed
+    const isValid = verifyPolynomial(parsedPoints, user.polynomial, tolerance);
+
+    if (isValid) {
+      return res.status(200).json({ message: 'Authentication successful' });
+    } else {
+      return res.status(401).json({ message: 'Point verification failed' });
+    }
+
+  } catch (error) {
+    console.error("Login Error:", error);
+    res.status(500).json({ message: "Login failed" });
   }
 });
 
 
-  
-  
-  
-  
+
+
+
+
+
 
 // Start the server
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
