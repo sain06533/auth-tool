@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import './Registration.css';
 
 const Registration = () => {
   const [username, setUsername] = useState('');
@@ -67,37 +68,51 @@ const Registration = () => {
   
 
   return (
-    <div>
+    <div className="registration-container">
       <h2>Register</h2>
-      <form onSubmit={handleSubmit}>
-        <input type="text" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} required />
-        <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-        <input type="file" accept="image/*" multiple onChange={handleImageUpload} required />
+      <form className="registration-form" onSubmit={handleSubmit}>
+        <input 
+          type="text" 
+          placeholder="Username" 
+          value={username} 
+          onChange={(e) => setUsername(e.target.value)} 
+          required 
+        />
+        <input 
+          type="password" 
+          placeholder="Password" 
+          value={password} 
+          onChange={(e) => setPassword(e.target.value)} 
+          required 
+        />
+        <div className="file-upload">
+          <input 
+            type="file" 
+            accept="image/*" 
+            multiple 
+            onChange={handleImageUpload} 
+            required 
+          />
+        </div>
 
         {selectedImage && (
-          <div>
+          <div className="image-preview">
             <h4>Click on points in the selected image</h4>
-            <div style={{ position: 'relative', display: 'inline-block' }}>
+            <div className="preview-container">
               <img
                 src={URL.createObjectURL(selectedImage)}
                 alt="Selected"
-                style={{ width: '300px', cursor: 'crosshair' }}
                 onClick={handleCanvasClick}
               />
               {points.map((point, index) => (
                 <div
                   key={index}
+                  className="point-marker"
                   style={{
-                    position: 'absolute',
                     left: `${point.x}px`,
                     top: `${point.y}px`,
-                    width: '8px',
-                    height: '8px',
-                    backgroundColor: 'red',
-                    borderRadius: '50%',
-                    transform: 'translate(-50%, -50%)',
                   }}
-                ></div>
+                />
               ))}
             </div>
           </div>
@@ -105,25 +120,27 @@ const Registration = () => {
 
         <button type="submit">Register</button>
       </form>
-      <p>{message}</p>
 
       {/* Image Selection Modal */}
       {showModal && (
         <div className="modal">
-          <h3>Select an Image</h3>
           <div className="modal-content">
-            {images.map((img, index) => (
-              <img
-                key={index}
-                src={URL.createObjectURL(img)}
-                alt={`Option ${index + 1}`}
-                style={{ width: '100px', margin: '10px', cursor: 'pointer' }}
-                onClick={() => handleImageSelect(img)}
-              />
-            ))}
+            <h3>Select an Image</h3>
+            <div className="image-grid">
+              {images.map((img, index) => (
+                <img
+                  key={index}
+                  src={URL.createObjectURL(img)}
+                  alt={`Option ${index + 1}`}
+                  onClick={() => handleImageSelect(img)}
+                />
+              ))}
+            </div>
           </div>
         </div>
       )}
+
+      {message && <p className={`message ${message.includes('failed') ? 'error' : 'success'}`}>{message}</p>}
     </div>
   );
 };
