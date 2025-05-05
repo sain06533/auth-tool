@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
+import './Login.css';
 
-const Login = () => {
+const Login = ({ onLogin }) => {
+  const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -55,18 +58,23 @@ const Login = () => {
         points: JSON.stringify(points),
       });
       setMessage(response.data.message);
+      if (response.data.message === 'Authentication successful') {
+        localStorage.setItem('username', username);
+        onLogin(); // Call the onLogin prop
+        navigate('/dashboard');
+      }
     } catch (error) {
       setMessage(error.response?.data?.message || 'Point verification failed.');
     }
   };
 
   return (
-    <div>
+    <div className="login-container">
       <h2>Login</h2>
 
       {/* Step 1: Username & Password */}
       {step === 1 && (
-        <form onSubmit={handleLoginStep1}>
+        <form className="login-form" onSubmit={handleLoginStep1}>
           <input
             type="text"
             placeholder="Username"
@@ -87,60 +95,48 @@ const Login = () => {
 
       {/* Step 2: Image Selection */}
       {step === 2 && (
-        <div>
+        <div className="image-selection">
           <h3>Select the correct image</h3>
-          {images.map((img, index) => (
-            <img
-              key={index}
-              src={img.data} // Assuming img.data is a valid Base64 URL
-              alt={`Option ${index + 1}`}
-              onClick={() => handleImageSelect(img)}
-              style={{
-                width: "100px",
-                height: "100px",
-                margin: "5px",
-                cursor: "pointer",
-                border: selectedImage && selectedImage.filename === img.filename ? "3px solid blue" : "1px solid gray",
-              }}
-            />
-          ))}
+          <div className="image-grid">
+            {images.map((img, index) => (
+              <img
+                key={index}
+                src={img.data}
+                alt={`Option ${index + 1}`}
+                onClick={() => handleImageSelect(img)}
+                className={selectedImage && selectedImage.filename === img.filename ? 'selected' : ''}
+              />
+            ))}
+          </div>
         </div>
       )}
 
       {/* Step 3: Select Points on Image */}
-      {/* Step 3: Select Points on Image */}
-{step === 3 && selectedImage && (
-  <div>
-    <h4>Click on 3 points on the selected image</h4>
-    <div style={{ position: 'relative', display: 'inline-block' }}>
-      <img
-        src={selectedImage.data} // Ensure the correct base64 data
-        alt="Selected"
-        style={{ width: '300px', cursor: 'crosshair' }}
-        onClick={handleCanvasClick}
-      />
-      {points.map((point, index) => (
-        <div
-          key={index}
-          style={{
-            position: 'absolute',
-            top: `${point.y}px`,
-            left: `${point.x}px`,
-            width: '6px',
-            height: '6px',
-            backgroundColor: 'red',
-            borderRadius: '50%',
-            transform: 'translate(-50%, -50%)',
-          }}
-        />
-      ))}
-    </div>
-    <button onClick={handleLoginStep3}>Verify Points</button>
-  </div>
-)}
+      {step === 3 && selectedImage && (
+        <div className="point-selection">
+          <h4>Click on points on the selected image</h4>
+          <div className="preview-container">
+            <img
+              src={selectedImage.data}
+              alt="Selected"
+              onClick={handleCanvasClick}
+            />
+            {points.map((point, index) => (
+              <div
+                key={index}
+                className="point-marker"
+                style={{
+                  left: `${point.x}px`,
+                  top: `${point.y}px`,
+                }}
+              />
+            ))}
+          </div>
+          <button className='verify-button' onClick={handleLoginStep3}>Verify Points</button>
+        </div>
+      )}
 
-
-      <p>{message}</p>
+      {message && <p className={`message ${message.includes('failed') ? 'error' : 'success'}`}>{message}</p>}
     </div>
   );
 };
